@@ -31,7 +31,7 @@ public interface AddedRelationsContainer {
 
     boolean remove(InternalRelation relation);
 
-    List<InternalRelation> getView(Predicate<InternalRelation> filter);
+    Iterable<InternalRelation> getView(Predicate<InternalRelation> filter);
 
     boolean isEmpty();
 
@@ -55,7 +55,7 @@ public interface AddedRelationsContainer {
         }
 
         @Override
-        public List<InternalRelation> getView(Predicate<InternalRelation> filter) {
+        public Iterable<InternalRelation> getView(Predicate<InternalRelation> filter) {
             return ImmutableList.of();
         }
 
