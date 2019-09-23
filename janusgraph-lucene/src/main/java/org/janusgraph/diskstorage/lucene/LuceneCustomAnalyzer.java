@@ -14,19 +14,16 @@
 
 package org.janusgraph.diskstorage.lucene;
 
-import org.janusgraph.core.schema.Mapping;
-import org.janusgraph.core.schema.Parameter;
-import org.janusgraph.diskstorage.indexing.KeyInformation;
-import org.janusgraph.graphdb.types.ParameterType;
+import java.util.*;
 
 import org.apache.lucene.analysis.Analyzer;
 import org.apache.lucene.analysis.DelegatingAnalyzerWrapper;
 import org.apache.lucene.analysis.core.KeywordAnalyzer;
 import org.apache.lucene.analysis.standard.StandardAnalyzer;
-
-import java.util.HashMap;
-import java.util.Map;
-import java.util.UUID;
+import org.janusgraph.core.schema.Mapping;
+import org.janusgraph.core.schema.Parameter;
+import org.janusgraph.diskstorage.indexing.KeyInformation;
+import org.janusgraph.graphdb.types.ParameterType;
 
 /**
  * An Analyzer that allows delegating analysis to custom analyzers. The class names for the custom analyzers are
@@ -59,30 +56,30 @@ public class LuceneCustomAnalyzer extends DelegatingAnalyzerWrapper {
 
     @Override
     final protected Analyzer getWrappedAnalyzer(String fieldName) {
-        final KeyInformation keyInformation = informations.get(store, fieldName);
-        if (keyInformation != null && keyInformation.getDataType().equals(UUID.class)) {
+        String mappedFieldName = FieldMapping.getMappedName(fieldName);
+        final KeyInformation keyInformation = informations.get(store, mappedFieldName);
+        FieldMapping fieldMapping = FieldMapping.createFieldMapping(fieldName, keyInformation);
+        if (fieldMapping.getDataType() == UUID.class) {
             return analyzerFor(KEYWORD_ANALYZER);
         }
-        if (keyInformation == null || !String.class.isAssignableFrom(keyInformation.getDataType())) {
+        if (fieldMapping.getDataType() == null || !String.class.isAssignableFrom(fieldMapping.getDataType())) {
             return analyzerFor(STANDARD_ANALYZER);
         }
         final Parameter[] parameters = keyInformation.getParameters();
-        // if mapping isn't present in parameters, we use Mapping.DEFAULT
-        final Mapping mapping = ParameterType.MAPPING.findParameter(parameters, Mapping.DEFAULT);
         // at the moment, we only try to support custom analyzers for string data.
         // everything else falls through a StandardAnalyzer as was the case before
-        return analyzerFor(analyzerNameFor(parameters, mapping, KEYWORD_ANALYZER, STANDARD_ANALYZER));
+        return analyzerFor(analyzerNameFor(parameters, fieldMapping.getMapping(), KEYWORD_ANALYZER, STANDARD_ANALYZER));
     }
 
-    private static String analyzerNameFor(final Parameter[] parameters, final Mapping mapping, final String defaultStringAnalyzer, final String defaultTextAnalyzer) {
+    private static String analyzerNameFor(final Parameter[] parameters, final Mapping mapping, final String defaultStringAnalyzer,
+                                          final String defaultTextAnalyzer) {
         switch (mapping) {
-            case TEXTSTRING:
-                throw new RuntimeException("TextString is an unsupported mapping for string data & custom analyzers");
             case PREFIX_TREE:
                 throw new RuntimeException("Prefix-tree is an unsupported mapping for string data & custom analyzers");
             case STRING:
                 return ParameterType.STRING_ANALYZER.findParameter(parameters, defaultStringAnalyzer);
             case TEXT:
+            case TEXTSTRING:
             case DEFAULT:// TEXT
                 return ParameterType.TEXT_ANALYZER.findParameter(parameters, defaultTextAnalyzer);
             default:
