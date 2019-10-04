@@ -100,9 +100,9 @@ public class BerkeleyJEKeyValueStore implements OrderedKeyValueStore {
 
             log.trace("db={}, op=get, tx={}", name, txh);
 
-            OperationStatus status = db.get(tx, databaseKey, data, getLockMode(txh));
+            OperationResult result = db.get(tx, databaseKey, data, Get.SEARCH, getOptions(txh));
 
-            if (status == OperationStatus.SUCCESS) {
+            if (result != null) {
                 return getBuffer(data);
             } else {
                 return null;
@@ -162,9 +162,9 @@ public class BerkeleyJEKeyValueStore implements OrderedKeyValueStore {
                 }
                 while (!selector.reachedLimit()) {
                     if (status == null) {
-                        status = cursor.getSearchKeyRange(foundKey, foundData, getLockMode(txh));
+                        status = cursor.get(foundKey, foundData, Get.SEARCH_GTE, getOptions(txh)) == null ? OperationStatus.NOTFOUND : OperationStatus.SUCCESS;
                     } else {
-                        status = cursor.getNext(foundKey, foundData, getLockMode(txh));
+                        status = cursor.get(foundKey, foundData, Get.NEXT, getOptions(txh)) == null ? OperationStatus.NOTFOUND : OperationStatus.SUCCESS;
                     }
                     if (status != OperationStatus.SUCCESS) {
                         break;
@@ -249,7 +249,8 @@ public class BerkeleyJEKeyValueStore implements OrderedKeyValueStore {
         return new StaticArrayBuffer(entry.getData(),entry.getOffset(),entry.getOffset()+entry.getSize());
     }
 
-    private static LockMode getLockMode(StoreTransaction txh) {
-        return ((BerkeleyJETx)txh).getLockMode();
+    private ReadOptions getOptions(final StoreTransaction txh) {
+        return new ReadOptions().setCacheMode(((BerkeleyJETx) txh).getCacheMode())
+                                .setLockMode(((BerkeleyJETx) txh).getLockMode());
     }
 }
