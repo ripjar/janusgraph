@@ -87,7 +87,8 @@ public class LuceneIndex implements IndexProvider {
     private static final Set<String> FIELDS_TO_LOAD = Sets.newHashSet(DOCID);
 
     private static final IndexFeatures LUCENE_FEATURES = new IndexFeatures.Builder()
-        .supportedStringMappings(Mapping.TEXT, Mapping.STRING)
+        .setDefaultStringMapping(Mapping.TEXT)
+        .supportedStringMappings(Mapping.TEXT, Mapping.STRING, Mapping.TEXTSTRING)
         .supportsCardinality(Cardinality.SINGLE)
         .supportsCardinality(Cardinality.LIST)
         .supportsCardinality(Cardinality.SET)
@@ -253,23 +254,9 @@ public class LuceneIndex implements IndexProvider {
                     if (log.isTraceEnabled()) {
                         log.trace("Removing field [{}] on document [{}]", fieldName, documentId);
                     }
-                    Iterator<IndexableField> it = doc.iterator();
                     KeyInformation ki = storeRetriever.get(fieldName);
-                    while (it.hasNext()) {
-                        IndexableField field = it.next();
-                        if (field.name().equals(del.field)) {
-                            if (ki.getCardinality() == Cardinality.SINGLE) {
-                                it.remove();
-                                break;
-                            } else {
-                                boolean multipleCardinalityFieldShouldBeRemoved = convertToStringValue(ki, del.value).equals(field.stringValue());
-                                if (multipleCardinalityFieldShouldBeRemoved) {
-                                    it.remove();
-                                    break;
-                                }
-                            }
-                        }
-                    }
+                    FieldMapping fieldMapping = FieldMapping.createFieldMapping(fieldName, ki);
+                    removeField(doc, fieldMapping, del.value, ki.getCardinality());
                 }
 
                 addToDocument(doc, mutation.getAdditions(), storeRetriever, false);
@@ -362,37 +349,44 @@ public class LuceneIndex implements IndexProvider {
                 log.trace("Adding field [{}] on document [{}]", e.field, doc.get(DOCID));
             }
             KeyInformation ki = information.get(e.field);
+            FieldMapping fieldMapping = FieldMapping.createFieldMapping(e.field, ki);
             if (!(isNew || ki.getCardinality() == Cardinality.LIST)) {
-                removeFieldIfNeeded(doc, e, ki);
+                removeField(doc, fieldMapping, e.value, ki.getCardinality());
             }
-            doc.add(buildStoreField(e.field, e.value, ki));
+            doc.add(buildStoreField(e.value, fieldMapping));
+            fieldMapping.getDualMapping()
+                        .ifPresent(i -> doc.add(buildStoreField(e.value, i)));
         }
         buildIndexFields(doc, information).forEach(doc::add);
     }
 
-    private void removeFieldIfNeeded(final Document doc, final IndexEntry e, final KeyInformation ki) {
-        boolean isSingle = ki.getCardinality() == Cardinality.SINGLE;
-        boolean isSet = ki.getCardinality() == Cardinality.SET;
+    private void removeField(Document doc, FieldMapping fieldMapping, Object fieldValue, Cardinality cardinality) {
+        removeFieldIfNeeded(doc, fieldMapping.getMapping(), fieldMapping.getFieldKey(), fieldValue, cardinality);
+        fieldMapping.getDualMapping()
+                    .ifPresent(f -> removeFieldIfNeeded(doc, f.getMapping(), f.getFieldKey(), fieldValue, cardinality));
+    }
+
+    private void removeFieldIfNeeded(Document doc, Mapping mapping, String fieldName, Object fieldValue, Cardinality cardinality) {
+        boolean isSingle = cardinality == Cardinality.SINGLE;
         Iterator<IndexableField> it = doc.iterator();
         while (it.hasNext()) {
             IndexableField field = it.next();
-            if (!field.name().equals(e.field)) {
+            if (!fieldName.equals(field.name())) {
                 continue;
             }
-            if (isSingle || (isSet && convertToStringValue(ki, e.value).equals(field.stringValue()))) {
+            if (isSingle || convertToStringValue(mapping, fieldValue).equals(field.stringValue())) {
                 it.remove();
                 break;
             }
         }
     }
 
-    private String convertToStringValue(final KeyInformation ki, Object value) {
+    private String convertToStringValue(Mapping mapping, Object value) {
         String converted;
         if (value instanceof Number) {
             converted = value.toString();
         } else if (AttributeUtil.isString(value)) {
-            Mapping mapping = Mapping.getMapping(ki);
-            if (mapping == Mapping.DEFAULT || mapping == Mapping.TEXT) {
+            if (mapping == Mapping.DEFAULT || mapping == Mapping.TEXT || mapping == Mapping.TEXTSTRING) {
                 converted = ((String) value).toLowerCase();
             } else {
                 converted = (String) value;
@@ -412,7 +406,8 @@ public class LuceneIndex implements IndexProvider {
     }
 
     // NOTE: new SET/LIST store fields must be sync with convertToStringValue
-    private Field buildStoreField(final String fieldName, final Object value, final KeyInformation keyInformation) {
+    private Field buildStoreField(final Object value, final FieldMapping fieldMapping) {
+        final String fieldName = fieldMapping.getFieldKey();
         final Field field;
         if (value instanceof Number) {
             if (AttributeUtil.isWholeNumber((Number) value)) {
@@ -422,9 +417,10 @@ public class LuceneIndex implements IndexProvider {
             }
         } else if (AttributeUtil.isString(value)) {
             final String str = (String) value;
-            final Mapping mapping = Mapping.getMapping(keyInformation);
+            final Mapping mapping = fieldMapping.getMapping();
             switch (mapping) {
                 case DEFAULT:
+                case TEXTSTRING:
                 case TEXT:
                     // lowering the case for case insensitive text search
                     field = new TextField(fieldName, str.toLowerCase(), Field.Store.YES);
@@ -460,9 +456,10 @@ public class LuceneIndex implements IndexProvider {
             if (fieldName.equals(DOCID)) {
                 continue;
             }
-            KeyInformation ki = information.get(fieldName);
+            KeyInformation ki = information.get(FieldMapping.getMappedName(fieldName));
+            FieldMapping fieldMapping = FieldMapping.createFieldMapping(fieldName, ki);
             boolean isPossibleSortIndex = ki.getCardinality() == Cardinality.SINGLE;
-            Class<?> dataType = ki.getDataType();
+            Class<?> dataType = fieldMapping.getDataType();
             if (AttributeUtil.isWholeNumber(dataType)) {
                 long value = field.numericValue().longValue();
                 fields.add(new LongPoint(fieldName, value));
@@ -476,8 +473,8 @@ public class LuceneIndex implements IndexProvider {
                     fields.add(new DoubleDocValuesField(fieldName, value));
                 }
             } else if (AttributeUtil.isString(dataType)) {
-                final Mapping mapping = Mapping.getMapping(information.get(fieldName));
-                if (mapping.equals(Mapping.STRING) && isPossibleSortIndex) {
+                final Mapping mapping = fieldMapping.getMapping();
+                if (mapping == Mapping.STRING && isPossibleSortIndex) {
                     fields.add(new SortedDocValuesField(fieldName, new BytesRef(field.stringValue())));
                 }
             } else if (AttributeUtil.isGeo(dataType)) {
@@ -507,12 +504,13 @@ public class LuceneIndex implements IndexProvider {
         return fields;
     }
 
-    private static Sort getSortOrder(List<IndexQuery.OrderEntry> orders) {
+    private static Sort getSortOrder(List<IndexQuery.OrderEntry> orders, KeyInformation.StoreRetriever information) {
         final Sort sort = new Sort();
         if (!orders.isEmpty()) {
             final SortField[] fields = new SortField[orders.size()];
             for (int i = 0; i < orders.size(); i++) {
                 final IndexQuery.OrderEntry order = orders.get(i);
+                FieldMapping fieldMapping = FieldMapping.createFieldMapping(order.getKey(), information.get(order.getKey()));
                 SortField.Type sortType = null;
                 final Class dataType = order.getDatatype();
                 if (AttributeUtil.isString(dataType)) sortType = SortField.Type.STRING;
@@ -523,7 +521,10 @@ public class LuceneIndex implements IndexProvider {
                 else
                     Preconditions.checkArgument(false, "Unsupported order specified on field [%s] with datatype [%s]", order.getKey(), dataType);
 
-                fields[i] = new SortField(order.getKey(), sortType, order.getOrder() == Order.DESC);
+                String fieldKey = fieldMapping.getDualMapping()
+                                              .map(FieldMapping::getFieldKey)
+                                              .orElseGet(fieldMapping::getFieldKey);
+                fields[i] = new SortField(fieldKey, sortType, order.getOrder() == Order.DESC);
             }
             sort.setSort(fields);
         }
@@ -551,7 +552,7 @@ public class LuceneIndex implements IndexProvider {
 
             Sort sort = null;
             if (!query.getOrder().isEmpty()) {
-                sort = getSortOrder(query.getOrder());
+                sort = getSortOrder(query.getOrder(), information.get(store));
             }
 
             final List<String> result = new ArrayList<>();
@@ -617,10 +618,10 @@ public class LuceneIndex implements IndexProvider {
 
     private void tokenize(SearchParams params, final Mapping mapping, final LuceneCustomAnalyzer delegatingAnalyzer, String value, String key, JanusGraphPredicate janusgraphPredicate) {
         final Analyzer analyzer = delegatingAnalyzer.getWrappedAnalyzer(key);
-        final List<String>    terms = customTokenize(analyzer, key, value);
+        final List<String> terms = customTokenize(analyzer, key, value);
         if (terms.isEmpty()) {
             // This might happen with very short terms
-            if (janusgraphPredicate == Text.CONTAINS_PREFIX ) {
+            if (janusgraphPredicate == Text.CONTAINS_PREFIX) {
                 final Term term;
                 if (mapping == Mapping.STRING) {
                     term = new Term(key, value);
@@ -690,38 +691,40 @@ public class LuceneIndex implements IndexProvider {
                 } else if (janusgraphPredicate == Cmp.GREATER_THAN_EQUAL) {
                     params.addQuery(TermRangeQuery.newStringRange(key, value.toString(), null, true, false));
                 } else {
-                        final Mapping map = Mapping.getMapping(information.get(key));
-                        if ((map == Mapping.DEFAULT || map == Mapping.TEXT) && !Text.HAS_CONTAINS.contains(janusgraphPredicate))
-                            throw new IllegalArgumentException("Text mapped string values only support CONTAINS queries and not: " + janusgraphPredicate);
-                        if (map == Mapping.STRING && Text.HAS_CONTAINS.contains(janusgraphPredicate))
-                            throw new IllegalArgumentException("String mapped string values do not support CONTAINS queries: " + janusgraphPredicate);
-                        if (janusgraphPredicate == Text.CONTAINS) {
-                            tokenize(params, map, delegatingAnalyzer, ((String) value).toLowerCase(), key, janusgraphPredicate);
-                        } else if (janusgraphPredicate == Text.CONTAINS_PREFIX) {
-                            tokenize(params, map, delegatingAnalyzer, (String) value, key, janusgraphPredicate);
-                        } else if (janusgraphPredicate == Text.PREFIX) {
-                            params.addQuery(new PrefixQuery(new Term(key, (String) value)));
-                        } else if (janusgraphPredicate == Text.REGEX) {
-                            final RegexpQuery rq = new RegexpQuery(new Term(key, (String) value));
-                            params.addQuery(rq);
-                        } else if (janusgraphPredicate == Text.CONTAINS_REGEX) {
-                            // This is terrible -- there is probably a better way
-                            // putting this to lowercase because Text search is supposed to be case insensitive
-                            final RegexpQuery rq = new RegexpQuery(new Term(key, ".*" + (((String) value).toLowerCase()) + ".*"));
-                            params.addQuery(rq);
-                        } else if (janusgraphPredicate == Cmp.EQUAL || janusgraphPredicate == Cmp.NOT_EQUAL) {
-                            tokenize(params, map, delegatingAnalyzer, (String) value, key, janusgraphPredicate);
-                        } else if (janusgraphPredicate == Text.FUZZY) {
-                            params.addQuery(new FuzzyQuery(new Term(key, (String) value)));
-                        } else if (janusgraphPredicate == Text.CONTAINS_FUZZY) {
-                            value = ((String) value).toLowerCase();
-                            final Builder b = new BooleanQuery.Builder();
-                            for (final String term : Text.tokenize((String) value)) {
-                                b.add(new FuzzyQuery(new Term(key, term)), BooleanClause.Occur.MUST);
-                            }
-                            params.addQuery(b.build());
-                        } else
-                            throw new IllegalArgumentException("Relation is not supported for string value: " + janusgraphPredicate);
+                    FieldMapping fieldMapping = FieldMapping.createFieldMapping(key, information.get(key));
+                    Mapping map = fieldMapping.getMapping();
+                    if ((map == Mapping.DEFAULT || map == Mapping.TEXT) && !Text.HAS_CONTAINS.contains(janusgraphPredicate))
+                        throw new IllegalArgumentException("Text mapped string values only support CONTAINS queries and not: " + janusgraphPredicate);
+                    if (map == Mapping.STRING && Text.HAS_CONTAINS.contains(janusgraphPredicate))
+                        throw new IllegalArgumentException("String mapped string values do not support CONTAINS queries: " + janusgraphPredicate);
+                    String stringMappingKey = fieldMapping.getDualMapping().map(FieldMapping::getFieldKey).orElse(key);
+                    if (janusgraphPredicate == Text.CONTAINS) {
+                        tokenize(params, map, delegatingAnalyzer, ((String) value).toLowerCase(), key, janusgraphPredicate);
+                    } else if (janusgraphPredicate == Text.CONTAINS_PREFIX) {
+                        tokenize(params, map, delegatingAnalyzer, (String) value, key, janusgraphPredicate);
+                    } else if (janusgraphPredicate == Text.PREFIX) {
+                        params.addQuery(new PrefixQuery(new Term(stringMappingKey, (String) value)));
+                    } else if (janusgraphPredicate == Text.REGEX) {
+                        final RegexpQuery rq = new RegexpQuery(new Term(stringMappingKey, (String) value));
+                        params.addQuery(rq);
+                    } else if (janusgraphPredicate == Text.CONTAINS_REGEX) {
+                        // This is terrible -- there is probably a better way
+                        // putting this to lowercase because Text search is supposed to be case insensitive
+                        final RegexpQuery rq = new RegexpQuery(new Term(key, ".*" + (((String) value).toLowerCase()) + ".*"));
+                        params.addQuery(rq);
+                    } else if (janusgraphPredicate == Cmp.EQUAL || janusgraphPredicate == Cmp.NOT_EQUAL) {
+                        tokenize(params, map, delegatingAnalyzer, (String) value, stringMappingKey, janusgraphPredicate);
+                    } else if (janusgraphPredicate == Text.FUZZY) {
+                        params.addQuery(new FuzzyQuery(new Term(stringMappingKey, (String) value)));
+                    } else if (janusgraphPredicate == Text.CONTAINS_FUZZY) {
+                        value = ((String) value).toLowerCase();
+                        final Builder b = new BooleanQuery.Builder();
+                        for (final String term : Text.tokenize((String) value)) {
+                            b.add(new FuzzyQuery(new Term(key, term)), BooleanClause.Occur.MUST);
+                        }
+                        params.addQuery(b.build());
+                    } else
+                        throw new IllegalArgumentException("Relation is not supported for string value: " + janusgraphPredicate);
                 }
             } else if (value instanceof Geoshape) {
                 Preconditions.checkArgument(janusgraphPredicate instanceof Geo, "Relation not supported on geo types: " + janusgraphPredicate);
@@ -816,7 +819,7 @@ public class LuceneIndex implements IndexProvider {
 
             Sort sort = null;
             if (!query.getOrders().isEmpty()) {
-                sort = getSortOrder(query.getOrders());
+                sort = getSortOrder(query.getOrders(), information.get(query.getStore()));
             }
             final List<RawQuery.Result<String>> result = new ArrayList<>();
             search(searcher, q, sort, offset, adjustedLimit, ((elementId, score) -> result.add(new RawQuery.Result<>(elementId, score))));
@@ -897,6 +900,8 @@ public class LuceneIndex implements IndexProvider {
                     return janusgraphPredicate == Text.CONTAINS || janusgraphPredicate == Text.CONTAINS_PREFIX || janusgraphPredicate == Text.CONTAINS_FUZZY; // || janusgraphPredicate == Text.CONTAINS_REGEX;
                 case STRING:
                     return janusgraphPredicate instanceof Cmp || janusgraphPredicate == Text.PREFIX || janusgraphPredicate == Text.REGEX || janusgraphPredicate == Text.FUZZY;
+                case TEXTSTRING:
+                    return janusgraphPredicate instanceof Text || janusgraphPredicate instanceof Cmp;
             }
         } else if (dataType == Date.class || dataType == Instant.class) {
             return janusgraphPredicate instanceof Cmp;
@@ -915,7 +920,7 @@ public class LuceneIndex implements IndexProvider {
         if (Number.class.isAssignableFrom(dataType) || dataType == Date.class || dataType == Instant.class || dataType == Boolean.class || dataType == UUID.class) {
             return mapping == Mapping.DEFAULT;
         } else if (AttributeUtil.isString(dataType)) {
-            return mapping == Mapping.DEFAULT || mapping == Mapping.STRING || mapping == Mapping.TEXT;
+            return mapping == Mapping.DEFAULT || mapping == Mapping.STRING || mapping == Mapping.TEXT || mapping == Mapping.TEXTSTRING;
         } else if (AttributeUtil.isGeo(dataType)) {
             return information.getCardinality() == Cardinality.SINGLE && (mapping == Mapping.DEFAULT || mapping == Mapping.PREFIX_TREE);
         }
