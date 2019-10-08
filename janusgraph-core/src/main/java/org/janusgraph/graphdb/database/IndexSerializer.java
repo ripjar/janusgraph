@@ -345,18 +345,37 @@ public class IndexSerializer {
         return new IndexUpdate<>(index, updateType, element2String(element), new IndexEntry(key2Field(index.getField(key)), value), element);
     }
 
-    public void reindexElement(JanusGraphElement element, MixedIndexType index, Map<String,Map<String,List<IndexEntry>>> documentsPerStore) {
-        if (!indexAppliesTo(index,element)) return;
+    public void reindexElement(JanusGraphElement element, MixedIndexType index, Map<String, Map<String, List<IndexEntry>>> documentsPerStore) {
+        if (!indexAppliesTo(index, element)) {
+            return;
+        }
         final List<IndexEntry> entries = Lists.newArrayList();
-        for (final ParameterIndexField field: index.getFieldKeys()) {
+        for (final ParameterIndexField field : index.getFieldKeys()) {
             final PropertyKey key = field.getFieldKey();
-            if (field.getStatus()==SchemaStatus.DISABLED) continue;
-            if (element.properties(key.name()).hasNext()) {
-                element.values(key.name()).forEachRemaining(value->entries.add(new IndexEntry(key2Field(field), value)));
+            if (field.getStatus() == SchemaStatus.DISABLED) {
+                continue;
+            }
+            if (element instanceof JanusGraphVertex) {
+                Iterable<JanusGraphVertexProperty> props =
+                    ((InternalVertex) element).tx()
+                                              .query((JanusGraphVertex) element)
+                                              .queryOnlyLoaded()
+                                              .noPartitionRestriction()
+                                              .type(key)
+                                              .properties();
+                for (JanusGraphVertexProperty prop : props) {
+                    entries.add(new IndexEntry(key2Field(field), prop.value()));
+                }
+            } else {
+                element.properties()
+                       .forEachRemaining(property -> {
+                           if (property.key().equals(key.name())) {
+                               entries.add(new IndexEntry(key2Field(field), property.value()));
+                           }
+                       });
             }
         }
-        final Map<String, List<IndexEntry>> documents = documentsPerStore.computeIfAbsent(index.getStoreName(), k -> Maps.newHashMap());
-        getDocuments(documentsPerStore,index).put(element2String(element),entries);
+        getDocuments(documentsPerStore, index).put(element2String(element), entries);
     }
 
     private Map<String,List<IndexEntry>> getDocuments(Map<String,Map<String,List<IndexEntry>>> documentsPerStore, MixedIndexType index) {
