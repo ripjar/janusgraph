@@ -19,6 +19,7 @@ import com.google.common.collect.Iterables;
 import com.google.common.collect.Sets;
 import org.janusgraph.core.*;
 import org.janusgraph.core.schema.ConsistencyModifier;
+import org.janusgraph.core.schema.Mapping;
 import org.janusgraph.graphdb.database.management.ModifierType;
 import org.janusgraph.graphdb.internal.ElementCategory;
 import org.janusgraph.graphdb.internal.InternalRelationType;
@@ -67,13 +68,16 @@ public class TypeUtil {
     public static boolean hasSimpleInternalVertexKeyIndex(PropertyKey key) {
         InternalRelationType type = (InternalRelationType)key;
         for (IndexType index : type.getKeyIndexes()) {
-            if (index.getElement()== ElementCategory.VERTEX && index.isCompositeIndex()) {
-                if (index.indexesKey(key)) return true;
-//                InternalIndexType iIndex = (InternalIndexType)index;
-//                if (iIndex.getFieldKeys().length==1) {
-//                    assert iIndex.getFieldKeys()[0].getFieldKey().equals(key);
-//                    return true;
-//                }
+            if (index.getElement() == ElementCategory.VERTEX && index.indexesKey(key)) {
+                if (index.isMixedIndex()) {
+                    ParameterIndexField field = ((MixedIndexType) index).getField(key);
+                    Object mapping = ParameterType.MAPPING.findParameter(field.getParameters(), null);
+                    if (Mapping.STRING.equals(mapping)) {
+                        return true;
+                    }
+                } else if (index.isCompositeIndex()) {
+                    return true;
+                }
             }
         }
         return false;
