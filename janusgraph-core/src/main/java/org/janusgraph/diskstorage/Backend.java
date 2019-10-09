@@ -45,6 +45,7 @@ import org.janusgraph.diskstorage.log.kcvs.KCVSLog;
 import org.janusgraph.diskstorage.log.kcvs.KCVSLogManager;
 import org.janusgraph.diskstorage.util.BackendOperation;
 import org.janusgraph.diskstorage.configuration.backend.KCVSConfiguration;
+import org.janusgraph.diskstorage.util.MetricInstrumentedIndexProvider;
 import org.janusgraph.diskstorage.util.MetricInstrumentedStoreManager;
 import org.janusgraph.diskstorage.util.StandardBaseTransactionConfig;
 import org.janusgraph.diskstorage.util.time.TimestampProvider;
@@ -94,6 +95,7 @@ public class Backend implements LockerProvider, AutoCloseable {
     public static final String METRICS_MERGED_STORE = "stores";
     public static final String METRICS_MERGED_CACHE = "caches";
     public static final String METRICS_CACHE_SUFFIX = ".cache";
+    public static final String METRICS_INDEX_PROVIDER_NAME = "indexProvider";
     public static final String LOCK_STORE_SUFFIX = "_lock_";
 
     public static final String SYSTEM_TX_LOG_NAME = "txlog";
@@ -427,6 +429,9 @@ public class Backend implements LockerProvider, AutoCloseable {
             IndexProvider provider = getImplementationClass(config.restrictTo(index), config.get(INDEX_BACKEND,index),
                     StandardIndexProvider.getAllProviderClasses());
             Preconditions.checkNotNull(provider);
+            if (config.get(BASIC_METRICS)) {
+                provider = new MetricInstrumentedIndexProvider(provider, METRICS_INDEX_PROVIDER_NAME + "." + index);
+            }
             builder.put(index, provider);
         }
         return builder.build();
