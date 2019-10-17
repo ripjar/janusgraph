@@ -16,7 +16,6 @@ package org.janusgraph.graphdb.transaction;
 
 import com.carrotsearch.hppc.LongArrayList;
 import com.google.common.base.Preconditions;
-import com.google.common.base.Predicate;
 import com.google.common.cache.Cache;
 import com.google.common.cache.CacheBuilder;
 import com.google.common.cache.Weigher;
@@ -78,6 +77,7 @@ import org.apache.tinkerpop.gremlin.structure.*;
 
 import org.apache.commons.lang.StringUtils;
 import org.cliffc.high_scale_lib.NonBlockingHashMap;
+import org.javatuples.Pair;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -90,6 +90,7 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.stream.Collectors;
+import java.util.stream.StreamSupport;
 
 /**
  * @author Matthias Broecheler (me@matthiasb.com)
@@ -1257,17 +1258,17 @@ public class StandardJanusGraphTx extends JanusGraphBlueprintsTransaction implem
 
     public final QueryExecutor<GraphCentricQuery, JanusGraphElement, JointIndexQuery> elementProcessorImpl = new QueryExecutor<GraphCentricQuery, JanusGraphElement, JointIndexQuery>() {
 
-        private PredicateCondition<PropertyKey, JanusGraphElement> getEqualityCondition(Condition<JanusGraphElement> condition) {
+        private List<PredicateCondition<PropertyKey, JanusGraphElement>> getEqualityConditions(Condition<JanusGraphElement> condition) {
             if (condition instanceof PredicateCondition) {
                 final PredicateCondition<PropertyKey, JanusGraphElement> pc = (PredicateCondition) condition;
-                if (pc.getPredicate() == Cmp.EQUAL && TypeUtil.hasSimpleInternalVertexKeyIndex(pc.getKey())) return pc;
+                if (pc.getPredicate() == Cmp.EQUAL && TypeUtil.hasSimpleInternalVertexKeyIndex(pc.getKey())) return Collections.singletonList(pc);
             } else if (condition instanceof And) {
-                for (final Condition<JanusGraphElement> child : condition.getChildren()) {
-                    final PredicateCondition<PropertyKey, JanusGraphElement> p = getEqualityCondition(child);
-                    if (p != null) return p;
-                }
+                return StreamSupport.stream(condition.getChildren().spliterator(), false)
+                                    .map(this::getEqualityConditions)
+                                    .flatMap(Collection::stream)
+                                    .collect(Collectors.toList());
             }
-            return null;
+            return Collections.emptyList();
         }
 
 
@@ -1277,41 +1278,17 @@ public class StandardJanusGraphTx extends JanusGraphBlueprintsTransaction implem
             if (query.numSubQueries()==1 && query.getSubQuery(0).getBackendQuery().isEmpty())
                 return Collections.emptyIterator();
             Preconditions.checkArgument(query.getCondition().hasChildren(),"If the query is non-empty it needs to have a condition");
-
             if (query.getResultType() == ElementCategory.VERTEX && hasModifications()) {
                 Preconditions.checkArgument(QueryUtil.isQueryNormalForm(query.getCondition()));
-                PredicateCondition<PropertyKey, JanusGraphElement> standardIndexKey = getEqualityCondition(query.getCondition());
-                Iterator<JanusGraphVertex> vertices;
-                if (standardIndexKey == null) {
-                    final Set<PropertyKey> keys = Sets.newHashSet();
-                    ConditionUtil.traversal(query.getCondition(), cond -> {
-                        Preconditions.checkArgument(cond.getType() != Condition.Type.LITERAL || cond instanceof PredicateCondition);
-                        if (cond instanceof PredicateCondition) {
-                            keys.add(((PredicateCondition<PropertyKey, JanusGraphElement>) cond).getKey());
-                        }
-                        return true;
-                    });
-                    Preconditions.checkArgument(!keys.isEmpty(), "Invalid query condition: %s", query.getCondition());
-                    Set<JanusGraphVertex> vertexSet = Sets.newHashSet();
-                    for (final JanusGraphRelation r : addedRelations.getView(relation -> keys.contains(relation.getType()))) {
-                        vertexSet.add(((JanusGraphVertexProperty) r).element());
-                    }
-                    for (JanusGraphRelation r : deletedRelations.values()) {
-                        if (keys.contains(r.getType())) {
-                            JanusGraphVertex v = ((JanusGraphVertexProperty) r).element();
-                            if (!v.isRemoved()) vertexSet.add(v);
-                        }
-                    }
-                    vertices = vertexSet.iterator();
-                } else {
-                    vertices = com.google.common.collect.Iterators.transform(newVertexIndexEntries.get(standardIndexKey.getValue(), standardIndexKey.getKey()).iterator(), new com.google.common.base.Function<JanusGraphVertexProperty, JanusGraphVertex>() {
-                        @Nullable
-                        @Override
-                        public JanusGraphVertex apply(final JanusGraphVertexProperty o) {
-                            return o.element();
-                        }
-                    });
-                }
+                Iterator<JanusGraphVertex> vertices = getEqualityConditions(query.getCondition())
+                    .stream()
+                    .map(i -> Pair.with(i, Iterables.size(newVertexIndexEntries.get(i.getValue(), i.getKey()))))
+                    .min(Comparator.comparingInt(Pair::getValue1))
+                    .map(p -> {
+                        PredicateCondition<PropertyKey, JanusGraphElement> indexKey = p.getValue0();
+                        return withCache(indexKey);
+                    })
+                    .orElseGet(() -> withoutCache(query));
 
                 return (Iterator) com.google.common.collect.Iterators.filter(vertices, query::matches);
             } else if ( (query.getResultType() == ElementCategory.EDGE || query.getResultType()==ElementCategory.PROPERTY)
@@ -1320,6 +1297,42 @@ public class StandardJanusGraphTx extends JanusGraphBlueprintsTransaction implem
             } else return Collections.emptyIterator();
         }
 
+        private Iterator<JanusGraphVertex> withCache(PredicateCondition<PropertyKey, JanusGraphElement> standardIndexKey) {
+            Iterator<JanusGraphVertex> vertices;
+            vertices = com.google.common.collect.Iterators.transform(newVertexIndexEntries.get(standardIndexKey.getValue(), standardIndexKey.getKey()).iterator(), new com.google.common.base.Function<JanusGraphVertexProperty, JanusGraphVertex>() {
+                @Nullable
+                @Override
+                public JanusGraphVertex apply(final JanusGraphVertexProperty o) {
+                    return o.element();
+                }
+            });
+            return vertices;
+        }
+
+        private Iterator<JanusGraphVertex> withoutCache(GraphCentricQuery query) {
+            Iterator<JanusGraphVertex> vertices;
+            final Set<PropertyKey> keys = Sets.newHashSet();
+            ConditionUtil.traversal(query.getCondition(), cond -> {
+                Preconditions.checkArgument(cond.getType() != Condition.Type.LITERAL || cond instanceof PredicateCondition);
+                if (cond instanceof PredicateCondition) {
+                    keys.add(((PredicateCondition<PropertyKey, JanusGraphElement>) cond).getKey());
+                }
+                return true;
+            });
+            Preconditions.checkArgument(!keys.isEmpty(), "Invalid query condition: %s", query.getCondition());
+            Set<JanusGraphVertex> vertexSet = Sets.newHashSet();
+            for (final JanusGraphRelation r : addedRelations.getView(relation -> keys.contains(relation.getType()))) {
+                vertexSet.add(((JanusGraphVertexProperty) r).element());
+            }
+            for (JanusGraphRelation r : deletedRelations.values()) {
+                if (keys.contains(r.getType())) {
+                    JanusGraphVertex v = ((JanusGraphVertexProperty) r).element();
+                    if (!v.isRemoved()) vertexSet.add(v);
+                }
+            }
+            vertices = vertexSet.iterator();
+            return vertices;
+        }
 
         @Override
         public boolean hasDeletions(GraphCentricQuery query) {
