@@ -1282,6 +1282,7 @@ public class StandardJanusGraphTx extends JanusGraphBlueprintsTransaction implem
                 Preconditions.checkArgument(QueryUtil.isQueryNormalForm(query.getCondition()));
                 Iterator<JanusGraphVertex> vertices = getEqualityConditions(query.getCondition())
                     .stream()
+                    .filter(c -> newVertexIndexEntries.contains(c.getKey()))
                     .map(i -> Pair.with(i, Iterables.size(newVertexIndexEntries.get(i.getValue(), i.getKey()))))
                     .min(Comparator.comparingInt(Pair::getValue1))
                     .map(p -> {

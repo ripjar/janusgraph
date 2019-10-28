@@ -19,7 +19,9 @@ import org.janusgraph.core.PropertyKey;
 import org.janusgraph.core.JanusGraphVertexProperty;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 /**
  * @author Matthias Broecheler (me@matthiasb.com)
@@ -28,19 +30,23 @@ import java.util.List;
 public class ConcurrentIndexCache implements IndexCache {
 
     private final HashMultimap<Object,JanusGraphVertexProperty> map;
+    private final Set<PropertyKey> properties;
 
     public ConcurrentIndexCache() {
         this.map = HashMultimap.create();
+        this.properties = new HashSet<>();
     }
 
     @Override
     public synchronized void add(JanusGraphVertexProperty property) {
         map.put(property.value(),property);
+        properties.add(property.propertyKey());
     }
 
     @Override
     public synchronized void remove(JanusGraphVertexProperty property) {
         map.remove(property.value(),property);
+        properties.remove(property.propertyKey());
     }
 
     @Override
@@ -50,5 +56,10 @@ public class ConcurrentIndexCache implements IndexCache {
             if (p.propertyKey().equals(key)) result.add(p);
         }
         return result;
+    }
+
+    @Override
+    public boolean contains(final PropertyKey property) {
+        return properties.contains(property);
     }
 }
