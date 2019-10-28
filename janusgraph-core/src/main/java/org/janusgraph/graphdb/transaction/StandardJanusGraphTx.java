@@ -1284,7 +1284,6 @@ public class StandardJanusGraphTx extends JanusGraphBlueprintsTransaction implem
                     .stream()
                     .filter(c -> newVertexIndexEntries.contains(c.getKey()))
                     .map(i -> Pair.with(i, Iterables.size(newVertexIndexEntries.get(i.getValue(), i.getKey()))))
-                    .filter(p -> p.getValue1() > 0)
                     .min(Comparator.comparingInt(Pair::getValue1))
                     .map(p -> {
                         PredicateCondition<PropertyKey, JanusGraphElement> indexKey = p.getValue0();
