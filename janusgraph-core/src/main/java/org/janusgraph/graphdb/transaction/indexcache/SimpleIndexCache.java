@@ -19,6 +19,9 @@ import com.google.common.collect.Iterables;
 import org.janusgraph.core.PropertyKey;
 import org.janusgraph.core.JanusGraphVertexProperty;
 
+import java.util.HashSet;
+import java.util.Set;
+
 /**
  * @author Matthias Broecheler (me@matthiasb.com)
  */
@@ -26,23 +29,32 @@ import org.janusgraph.core.JanusGraphVertexProperty;
 public class SimpleIndexCache implements IndexCache {
 
     private final HashMultimap<Object,JanusGraphVertexProperty> map;
+    private final Set<PropertyKey> properties;
 
     public SimpleIndexCache() {
         this.map = HashMultimap.create();
+        this.properties = new HashSet<>();
     }
 
     @Override
     public void add(JanusGraphVertexProperty property) {
         map.put(property.value(),property);
+        properties.add(property.propertyKey());
     }
 
     @Override
     public void remove(JanusGraphVertexProperty property) {
         map.remove(property.value(),property);
+        properties.remove(property.propertyKey());
     }
 
     @Override
     public Iterable<JanusGraphVertexProperty> get(final Object value, final PropertyKey key) {
         return Iterables.filter(map.get(value), janusgraphProperty -> janusgraphProperty.propertyKey().equals(key));
+    }
+
+    @Override
+    public boolean contains(final PropertyKey property) {
+        return properties.contains(property);
     }
 }

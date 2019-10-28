@@ -28,4 +28,6 @@ public interface IndexCache {
 
     Iterable<JanusGraphVertexProperty> get(Object value, PropertyKey key);
 
+    boolean contains(PropertyKey property);
+
 }
