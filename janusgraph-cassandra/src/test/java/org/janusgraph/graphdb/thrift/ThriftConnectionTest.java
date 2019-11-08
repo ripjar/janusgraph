@@ -39,7 +39,7 @@ public class ThriftConnectionTest {
     private static final int FRAME_SIZE = 15 * 1024 * 1024;
     private static final int TIMEOUT_MS = 5 * 1000;
     private static final int BACKLOG_PORT = 9098;
-    private static final int LISTEN_PORT = 9099;
+    private static final int LISTEN_PORT = 9199;
 
     private final Logger log = LoggerFactory.getLogger(ThriftConnectionTest.class);
     private CTConnectionFactory.Config factoryConfig;

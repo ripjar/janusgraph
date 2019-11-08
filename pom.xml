@@ -80,15 +80,16 @@
         <sesame.version>2.7.10</sesame.version>
         <slf4j.version>1.7.12</slf4j.version>
         <httpcomponents.version>4.4.1</httpcomponents.version>
-        <hadoop2.version>2.7.7</hadoop2.version>
+        <!--<hadoop2.version>2.7.7</hadoop2.version>-->
+        <hadoop2.version>3.2.0</hadoop2.version>
         <hbase1.version>1.4.10</hbase1.version>
-        <hbase2.version>2.1.5</hbase2.version>
-        <hbase.server.version>1.4.10</hbase.server.version>
+        <hbase2.version>2.2.0</hbase2.version>
+        <hbase.server.version>2.2.0</hbase.server.version>
         <bigtable.version>1.11.0</bigtable.version>
         <scylladb.version>1.7.1</scylladb.version>
         <!-- align with org.apache.hbase:hbase -->
         <jackson1.version>1.9.13</jackson1.version>
-        <jackson2.version>2.6.6</jackson2.version>
+        <jackson2.version>2.9.2</jackson2.version>
         <lucene-solr.version>7.0.0</lucene-solr.version>
         <elasticsearch-driver.version>6.6.0</elasticsearch-driver.version>
         <elasticsearch-server.version>6.0.1</elasticsearch-server.version>
@@ -100,7 +101,7 @@
         <antlr.version>3.2</antlr.version>
         <asm3.version>3.1</asm3.version>
         <asm4.version>4.0</asm4.version>
-        <zookeeper.version>3.4.6</zookeeper.version>
+        <zookeeper.version>3.4.10</zookeeper.version>
         <jersey.version>1.9</jersey.version>
         <!-- align with org.apache.tinkerpop:tinkerpop -->
         <netty4.version>4.1.25.Final</netty4.version>
@@ -183,7 +184,7 @@
     <build>
         <directory>${basedir}/target</directory>
         <plugins>
-            <plugin>        
+            <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-enforcer-plugin</artifactId>
                 <version>3.0.0-M2</version>
@@ -297,7 +298,7 @@
                         <exclude>**/src/test/resources/org/janusgraph/hadoop/formats/edgelist/rdf/**</exclude>
                     </excludes>
                 </configuration>
-            </plugin>        
+            </plugin>
 
         </plugins>
         <pluginManagement>
@@ -1270,7 +1271,7 @@
               Sign artifacts artifacts only during release:perform
               when this profile is automatically activated or whenever
               else it is manually activated.
-    
+
               Stolen from: https://blog.sonatype.com/people/2010/01/how-to-generate-pgp-signatures-with-maven/
             -->
             <build>
@@ -1371,11 +1372,55 @@
                         <groupId>org.apache.hadoop</groupId>
                         <artifactId>hadoop-common</artifactId>
                         <version>${hadoop2.version}</version>
+			<exclusions>
+				<exclusion>
+					<groupId>org.apache.htrace</groupId>
+					<artifactId>htrace-core4</artifactId>
+				</exclusion>
+				<exclusion>
+					<groupId>com.nimbusds</groupId>
+					<artifactId>nimbus-jose-jwt</artifactId>
+				</exclusion>
+				<exclusion>
+					<groupId>org.eclipse.jetty</groupId>
+					<artifactId>jetty-server</artifactId>
+				</exclusion>
+				<exclusion>
+					<groupId>org.eclipse.jetty</groupId>
+					<artifactId>jetty-servlet</artifactId>
+				</exclusion>
+				<exclusion>
+					<groupId>org.eclipse.jetty</groupId>
+					<artifactId>jetty-util</artifactId>
+				</exclusion>
+				<exclusion>
+					<groupId>org.eclipse.jetty</groupId>
+					<artifactId>jetty-webapp</artifactId>
+				</exclusion>
+			</exclusions>
                     </dependency>
                     <dependency>
                         <groupId>org.apache.hadoop</groupId>
                         <artifactId>hadoop-hdfs</artifactId>
                         <version>${hadoop2.version}</version>
+			<exclusions>
+				<exclusion>
+					<groupId>org.apache.htrace</groupId>
+					<artifactId>htrace-core4</artifactId>
+				</exclusion>
+				<exclusion>
+					<groupId>org.eclipse.jetty</groupId>
+					<artifactId>jetty-server</artifactId>
+				</exclusion>
+				<exclusion>
+					<groupId>org.eclipse.jetty</groupId>
+					<artifactId>jetty-util-ajax</artifactId>
+				</exclusion>
+				<exclusion>
+					<groupId>org.eclipse.jetty</groupId>
+					<artifactId>jetty-util</artifactId>
+				</exclusion>
+			</exclusions>
                     </dependency>
                     <dependency>
                         <groupId>org.apache.hadoop</groupId>
@@ -1420,6 +1465,16 @@
                         <groupId>org.apache.hadoop</groupId>
                         <artifactId>hadoop-yarn-common</artifactId>
                         <version>${hadoop2.version}</version>
+			<exclusions>
+				<exclusion>
+					<groupId>com.sun.jersey.contribs</groupId>
+					<artifactId>jersey-guice</artifactId>
+				</exclusion>
+				<exclusion>
+					<groupId>org.eclipse.jetty</groupId>
+					<artifactId>jetty-util</artifactId>
+				</exclusion>
+			</exclusions>
                     </dependency>
                     <dependency>
                         <groupId>org.apache.hadoop</groupId>

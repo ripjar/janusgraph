@@ -42,6 +42,12 @@
         <groupId>org.janusgraph</groupId>
         <artifactId>janusgraph-cql</artifactId>
         <version>${project.version}</version>
+	<exclusions>
+		<exclusion>
+			<groupId>org.ow2.asm</groupId>
+			<artifactId>asm</artifactId>
+		</exclusion>
+	</exclusions>
       </dependency>
         <dependency>
             <groupId>org.janusgraph</groupId>
@@ -71,6 +77,10 @@
                 <exclusion>
                     <groupId>org.apache.commons</groupId>
                     <artifactId>commons-compress</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>jline</groupId>
+                    <artifactId>jline</artifactId>
                 </exclusion>
             </exclusions>
         </dependency>
